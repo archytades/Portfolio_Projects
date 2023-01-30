@@ -1,0 +1,376 @@
+---
+title: "Project 2 Linear Regression"
+author: "Brandtly Jones"
+date: '2022-08-09'
+output: html_document
+---
+
+
+```{r}
+#import data
+library(tidyverse)
+library(corrplot)
+data<-as_tibble(read.csv("~/MSDS/STAT6021/Project2/kc_house_data.csv"))
+
+```
+
+#### Define categorical variables 
+
+Change waterfront to categorical.
+```{r}
+data$waterfront <- factor(data$waterfront)
+levels(data$waterfront) <- c("no","yes") 
+```
+
+Change view to categorical. 
+```{r}
+data$view <- factor(data$view)
+levels(data$view) <- c("no", "yes", "yes", "yes", "yes") 
+```
+
+#### Create new variables 
+Create categorical variable 'renovated' for houses showing a renovation:
+```{r}
+data <- data %>% mutate(renovated = yr_renovated>0)
+data$renovated<-factor(data$renovated)
+levels(data$renovated)<- c("no","yes") 
+```
+
+
+
+Create variable age from (2015-yr_built) to age. 
+```{r}
+data <- mutate(data, age = 2015 - yr_built)
+
+```
+
+Create categorical variable over_budget for our hypothetical Seattle transplant finding a home for  ($718,000). 
+```{r}
+data <- data %>% mutate(over_budget = price > 718000)
+data$over_budget <- factor(data$over_budget)
+levels(data$over_budget) <- c("no","yes") 
+```
+
+Change sqft_basement to basement. 
+```{r}
+data <- data %>% mutate(basement = sqft_basement>0)
+data$has_basement <- factor(data$basement)
+levels(data$basement) <- c("no","yes") 
+```
+
+Change date to season. 
+```{r}
+data$date <- substr(data$date,start=1,stop=8)
+data$year <- substr(data$date,start=1,stop=4)
+data$month <- substr(data$date, start=5, stop=6)
+data$day <- substr(data$date, start=7, stop=8)
+data$season <- ifelse(data$month=="05"|
+                       data$month=="06"|
+                       data$month=="07"|
+                       data$month=="08"|
+                       data$month=="09","summer","non-summer")
+```
+
+
+While there are homes for almost all years with 0-3 bathrooms, above that homes are generally newer (<20 years old), so we can try a categorical predictor for homes with >3 bathrooms
+```{r}
+data<-data %>% mutate(many_baths = bathrooms>3.5)
+```
+
+
+Set a distance variable instead of latitude longitude
+```{r}
+library(geosphere)
+snlat <- 47.62
+snlong <- -122.23
+r = 3958.8
+
+distance <- c()
+for (x in 1:nrow(data)){
+  d <- distHaversine(c(data$long[x],data$lat[x]),c(snlong,snlat),r=r)
+  distance <- append(distance,d)
+}
+data$distance <- distance
+```
+
+
+So what are we working with?
+```{r}
+names(data)
+```
+
+
+House id and zipcode are not going into the model so we'll delete them.
+```{r}
+data<-data %>% select(-id, -zipcode)
+```
+
+Let's have a look at our quatitative variables to find correlations:
+```{r}
+quant_cor <- data %>% 
+  select(price, bedrooms, bathrooms, sqft_living, sqft_above, sqft_lot, floors, 
+                       condition, grade, sqft_basement, lat, long, sqft_living15,
+                       sqft_lot15, age,  distance) %>%
+  cor(use = 'complete.obs') %>% 
+  round(2)
+
+corrplot(quant_cor, type = "lower", order = "FPC", diag = T, method = 'square',
+         col = COL2('PuOr'),
+         tl.col = "black", tl.srt = 45,
+         title = "Correlation matrix of numerical variables", 
+         mar=c(0,0,1,0))
+```
+
+For better or worse, we see strong negative correlations with a number of variables like square footage, bathrooms, and floors. Somewhat surprisingly there is a positive correlation between age and condition. 
+
+before proceding, we will split our data into a training and test set with an 80/20 split:
+
+```{r}
+set.seed(206)
+samp<-sample.int(nrow(data), floor(.80*nrow(data)), replace = F)
+train<-data[samp, ] ##training data frame
+test<-data[-samp, ] ##test data frame
+```
+
+
+We will now try some automated search procedures to fit a linear regression model with our features.
+We obviously cannot include data which contains the age of the house like yr_built, or since_reno (which is mostly identical to age), and yr_renovated is a bit of a cheat since this gives a terminus ante quem for the age of the house. So our slightly reduced data set is regdata:
+
+```{r}
+regdata<-train %>% select(-yr_built, -since_reno,-year, -month, -day, -yr_renovated, -lat, -long, -many_baths, -over_budget)
+```
+
+```{r}
+##intercept only model
+regnull <- lm(age~1, data=regdata)
+##model with all predictors
+regfull <- lm(age~., data=regdata)
+```
+
+We will attempt a backward search of the models from  the full training regdata to the intercept-only model hoping to simplify the model as much as possible.
+```{r}
+step(regnull, scope=list(lower=regnull, upper=regfull), direction="forward")
+
+```
+So our search outputs a big-honking model with 17 predictors. We will inspect the model and see what features seem valuable and which we may want to eliminate.
+
+```{r}
+starting_model<-lm(age ~ bathrooms + condition + renovated + distance + 
+    floors + grade + price + sqft_living + view + bedrooms + 
+    sqft_living15 + has_basement + waterfront + sqft_above + 
+    sqft_lot, data = regdata)
+summary(starting_model)
+```
+Our p-value suggests our model is useful for predicting the response. Moreover, the model indicates that all of these features are significant in the presence of the rest. sqft_living and sqft_above are shown as slightly less significant. Indeed the pair have a 0.875 correlation.
+
+```{r}
+cor(regdata$sqft_above, regdata$sqft_living, method='pearson')
+```
+
+Before deciding what features, if any, we want to drop, we will do the usual tests of the assumptions for linear models.
+
+```{r}
+library(faraway)
+vif(starting_model)
+```
+
+As expected, sqft_living and sqft_above have high VIF scores due to their close correlation.
+
+Let's check our residuals:
+```{r}
+yhat<-starting_model$fitted.values
+res<-starting_model$residuals
+Data<-data.frame(regdata, yhat, res)
+##residual plot
+ggplot(Data, aes(x=yhat,y=res))+
+geom_point()+
+geom_hline(yintercept=0, color="red")+
+labs(x="Fitted y", y="Residuals", title="Residual Plot of Starting Model")
+```
+That is definitely not a nice even spread. The residuals appear biased. The results are showing a linear pattern which could be due to a lurking variable not in the data. Also, since the response is discrete (even though it has a lot of values) we are getting a series of parallel lines.
+
+Checking the ACF:
+```{r}
+acf(res, main="ACF of Residuals from Final Model")
+```
+
+The ACF plot looks fine.
+
+Finally a QQ plot. Based on our residual plot, we don't expect a nice normal distribution:
+
+```{r}
+qqnorm(res)
+qqline(res, col="red")
+```
+
+Our sample quantiles veer far off, indicating some right-skew and fat tails.
+
+It's not clear how we should transform our data to better meet the assumptions of linear aggression. 
+
+    
+```{r}
+
+
+log_sizevariables<-lm(age ~ price + bedrooms + bathrooms + log(sqft_living) + 
+    log(sqft_lot) + floors + waterfront + view + condition + grade + 
+    log(sqft_above) + log(sqft_living15) + renovated + over_budget + has_basement + 
+    distance, data = regdata)
+summary(log_sizevariables)
+```
+
+This model is likewise significant by its p-value, though now log(sqft_living) is insignificant. Before removing it, we will test if the model is any better than the starting model.We see no improvement in R^2 between the models. We can try ditching log(sqft_living) to see if we see any improvement.
+
+```{r}
+log_size_sans_living<-lm(age ~ price + bedrooms + bathrooms + 
+    log(sqft_lot) + floors + waterfront + view + condition + 
+    grade + log(sqft_above) + log(sqft_living15) + renovated + 
+    over_budget + has_basement + distance, data = regdata)
+
+summary(log_size_sans_living)
+```
+```{r}
+anova(log_size_sans_living,log_sizevariables)
+```
+
+
+We get an insignificant result, indicating that the coefficients for log(sqft_above) is zero and we should go with the reduced model.
+
+Testing for linear regression assumptions:
+
+```{r}
+yhat<-log_size_sans_living$fitted.values
+res<-log_size_sans_living$residuals
+Data<-data.frame(regdata, yhat, res)
+##residual plot
+ggplot(Data, aes(x=yhat,y=res))+
+geom_point()+
+geom_hline(yintercept=0, color="red")+
+labs(x="Fitted y", y="Residuals", title="Residual Plot of Model with log size variable and sqft_living removed")
+
+```
+
+
+We see no improvement. So we will revert to the starting model for simplicity.
+
+
+Finally, we will see if removing sqft_living from the starting model yields any improvement.
+
+```{r}
+reduced<-lm(age ~ price + bedrooms + bathrooms + sqft_lot + 
+    floors + waterfront + view + condition + grade + sqft_above + 
+    sqft_living15 + renovated + over_budget + has_basement + 
+    distance+many_baths, data = regdata)
+```
+
+
+```{r}
+anova(reduced, starting_model)
+```
+
+Even with the collinearity, our anova test indicates that we have non-zero coefficients for our dropped predictors and so we go with the starting model.
+
+
+
+
+Now we can test it against the test set to see how we do.
+
+How often does our model get within 5 years of the correct age?
+
+```{r}
+preds<-predict(starting_model, newdata = test, interval = 'prediction')
+
+accuracy<-function(predict_vec, threshold){
+  sum(abs(predict_vec[,1]-test$age)<=threshold)/dim(predict_vec)[1]}
+
+accuracy(preds, 5)
+```
+
+Not awesome predictive power.
+
+10 years?
+```{r}
+accuracy(preds,10)
+```
+
+Jumps close to 50%
+
+```{r}
+CI_size<-mean(preds[,3]-preds[,2])
+CI_size
+```
+
+
+
+tyler's model:
+```{r}
+ts_model<-lm(age~price+bedrooms+bathrooms+sqft_living+sqft_lot+
+                   floors+condition+grade+distance+sqft_living15+
+                   waterfront+view+has_basement+renovated, data=train)
+summary(ts_model)
+```
+
+```{r}
+ts_model$coefficients
+```
+```{r}
+tpreds<-predict(ts_model, newdata = test, interval = 'prediction')
+```
+
+```{r}
+accuracy(tpreds, 5)
+```
+
+```{r}
+accuracy(tpreds,10)
+```
+
+```{r}
+vif(ts_model)
+
+```
+
+residual plot for ts_model:
+```{r}
+yhat<-ts_model$fitted.values
+res<-ts_model$residuals
+Data<-data.frame(regdata, yhat, res)
+##residual plot
+ggplot(Data, aes(x=yhat,y=res))+
+geom_point()+
+geom_hline(yintercept=0, color="red")+
+labs(x="Fitted y", y="Residuals", title="Residual Plot of Final Model")
+
+```
+```{r}
+zerod_preds<-tpreds 
+```
+
+
+```{r}
+ggplot(data, aes(x=yr_built))+
+  geom_density()+
+  labs(title="Density plot of year built", x='Year Built')
+```
+
+```{r}
+ggplot(data, aes(x=yr_built))+
+  geom_histogram(binwidth=1, alpha=.6)+
+  labs(title="Number of houses built by year", x='Year Built')
+```
+```{r}
+ggplot(data, aes(x=yr_built, y=bathrooms))+
+  geom_point(alpha=.2)+
+  geom_smooth(method=lm, color="red", se=FALSE)+
+  labs(title="Number of bathrooms by year built", x='Year Built')+
+  theme(legend.position = "none")
+
+```
+```{r}
+typical_homes<-data %>% filter(bedrooms==3, bathrooms==2, 
+                               sqft_living<=1925 & sqft_living>=1875, 
+                               floors==1, 
+                               has_basement=='no')
+
+table(typical_homes$yr_built)
+```
+

@@ -1,0 +1,144 @@
+---
+title: "Question 1"
+author: "Tyler Valentine"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Import packages
+```{r}
+library(tidyverse)
+library(leaps)
+library(faraway)
+```
+
+### Import data
+
+```{r}
+data <- read.csv("seattle_housing_data.csv")
+```
+
+### A little EDA: distribution of ages of houses in the data
+```{r}
+ggplot(data, aes(x=(2015-age), y=bathrooms))+
+  geom_point(alpha=.2)+
+  geom_smooth(method=lm, color="red", se=FALSE)+
+  labs(title="Number of bathrooms by year built", x='Year Built')+
+  theme(legend.position = "none")
+```
+Density plot:
+
+```{r}
+ggplot(data, aes(x=2015-age))+
+  geom_density()+
+  labs(title="Density plot of year built", x='Year Built')
+```
+
+
+
+### Separate training and test data
+
+```{r}
+set.seed(206)
+sample <- sample.int(nrow(data), floor(.80*nrow(data)), replace = F)
+train <- data[sample, ] ##training data
+test <- data[-sample, ] ##test data
+```
+
+### Linear regression
+
+```{r}
+full.model <- lm(age~price+bedrooms+bathrooms+sqft_living+sqft_lot+
+                   floors+condition+grade+sqft_above+distance+sqft_living15+
+                   sqft_lot15+waterfront+view+basement+renovated+season, data=train)
+summary(full.model)
+```
+
+### Partial F test to see if we can drop predictors. 
+
+Drop season, sqft_lot_15
+```{r}
+reduced.model <- lm(age~price+bedrooms+bathrooms+sqft_living+sqft_lot+sqft_above+
+                   floors+condition+grade+distance+sqft_living15+ 
+                   waterfront+view+basement+renovated, data=train)
+full.model <- lm(age~price+bedrooms+bathrooms+sqft_living+sqft_lot+
+                   floors+condition+grade+sqft_above+distance+sqft_living15+ sqft_above+
+                   sqft_lot15+waterfront+view+basement+renovated+season, data=train)
+anova(reduced.model,full.model)
+```
+
+Check for multicollinearity:
+Drop sqft_above
+```{r}
+vif(reduced.model)
+```
+
+Use VIF to check for multicollinearity in final model. 
+```{r}
+vif(final.model)
+```
+
+```{r}
+final.model <- lm(age~price+bedrooms+bathrooms+sqft_living+sqft_lot+
+                   floors+condition+grade+distance+sqft_living15+ 
+                   waterfront+view+basement+renovated, data=train)
+```
+
+### Final model 
+```{r}
+summary(final.model)
+```
+
+### Regression assumptions
+
+Residual plot for final.model
+
+```{r}
+yhat<-final.model$fitted.values
+res<-final.model$residuals
+Data<-data.frame(train, yhat, res)
+##residual plot
+ggplot(Data, aes(x=yhat,y=res))+
+geom_point()+
+geom_hline(yintercept=0, color="red")+
+  labs(x="Fitted y", y="Residuals", title="Residual Plot of Final Model")
+
+```
+
+
+ACF
+```{r}
+acf(res, main="ACF of Residuals from Final Model")
+
+```
+QQ Plot
+
+```{r}
+qqnorm(res)
+qqline(res, col="red")
+```
+
+## Testing the Model
+
+```{r}
+preds<-predict(final.model, newdata = test, interval = 'prediction')
+
+#a function to predict the accuracy using test data
+accuracy<-function(predict_vec, threshold){
+  sum(abs(predict_vec[,1]-test$age)<=threshold)/dim(predict_vec)[1]}
+
+accuracy(preds, 5)
+```
+
+```{r}
+accuracy(preds, 10)
+```
+
+
+
+Accuracy of 22.9% for predictions within 5 years, 43.6% for predictions within 10 years. 
+

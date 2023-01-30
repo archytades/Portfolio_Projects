@@ -1,0 +1,186 @@
+# Project 2: Housing Prices in King Co. Washington, 2014-15
+
+## Exploratory data analysis
+
+Columns: 
+id - Unique ID for each home sold
+date - Date of the home sale
+price - Price of each home sold
+bedrooms - Number of bedrooms
+bathrooms - Number of bathrooms, where .5 accounts for a room with a toilet but no shower
+sqft_living - Square footage of the apartments interior living space
+sqft_lot - Square footage of the land space
+floors - Number of floors
+waterfront - A dummy variable for whether the apartment was overlooking the waterfront or not
+view - An index from 0 to 4 of how good the view of the property was
+condition - An index from 1 to 5 on the condition of the apartment,
+grade - An index from 1 to 13, where 1-3 falls short of building construction and design, 7 has an average level of construction and design, and 11-13 have a high quality level of construction and design.
+sqft_above - The square footage of the interior housing space that is above ground level
+sqft_basement - The square footage of the interior housing space that is below ground level
+yr_built - The year the house was initially built
+yr_renovated - The year of the house’s last renovation
+zipcode - What zipcode area the house is in
+lat - Lattitude
+long - Longitude
+sqft_living15 - The square footage of interior housing living space for the nearest 15 neighbors
+sqft_lot15 - The square footage of the land lots of the nearest 15 neighbors
+
+
+no missing values, but there is a little housecleaning to do.
+houses with >10 bedrooms seem suspect
+6 houses list no bedroom but have bathroom (studio? but 3 with 2.5 bath?)
+7 with no bed or bath, but >3k sqft and >$1mil
+
+But don't delete until after fitting the model
+
+
+
+```{r}
+#import data
+library(tidyverse)
+
+kc_df<-as_tibble(read.csv("~/MSDS/STAT6021/Project2/kc_house_data.csv"))
+```
+
+
+
+```{r}
+ggplot(kc_df, aes(x=long, y=lat, color=yr_built))+
+  geom_hexbin()
+```
+
+
+
+```{r}
+#correlations? pull out the quantitative variables and see
+kc_quant<-kc_df %>% select(price, sqft_living, sqft_lot, condition, grade, sqft_above, sqft_basement, sqft_living15, sqft_lot15)
+kc_cor<-cor(kc_quant)
+kc_cor %>% heatmap()
+print(kc_cor)
+print(min(kc_cor))
+```
+Highest correlation (.877) between sqft_above and sqft_living (shouldn't include both in a model bc of collinearity)
+```{r}
+install.packages("corrplot")
+library(corrplot)
+```
+
+```{r}
+corrplot(kc_cor, method = 'ellipse')#,
+#          method = "square",
+#          type = "lower",
+#          tl.col = "black",
+#          tl.cex = 1,
+#          col = colorRampPalette(c("brown", "purple"))(100)
+# )
+```
+
+
+```{r}
+
+ggplot(kc_df, aes(long, lat, color=2015-yr_built))+
+  #geom_density_2d(mapping=aes(color=price), bins=20)+
+  geom_point(alpha=.15, color='darkgreen')
+
+#plot(kc_df$long, kc_df$lat, col=ifelse(kc_df$waterfront=='1', "green", ifelse((kc_df$view==4 & kc_df$waterfront=='0'), rgb(red = 1, green = 0, blue = 0, alpha = 1), rgb(red = 0, green = 0, blue = 1, alpha = 0.2))))
+```
+Green dots are classified 'waterfront', 
+
+
+```{r}
+table(kc_df$waterfront)
+```
+
+Properties considered waterfront are very rare in the data (less than 1% of the )
+
+
+```{r}
+table(kc_df$yr_renovated!=0)
+```
+
+Almost 1000 houses renovated, but a tiny fraction of the housing stock. 
+
+
+Do houses on the waterfront have good views?
+
+```{r}
+kc_df$waterfront<-factor(kc_df$waterfront)
+ggplot(kc_df, aes(x=waterfront, y=view))+
+  geom_violin()
+```
+where are there houses with 4 star views that are not on the waterfront? There are 184 of them. are they clustered?
+
+
+
+```{r}
+four_star_offwater<-kc_df %>% filter(view==4 & waterfront=='0')
+ggplot(four_star_offwater, aes(long, lat))+
+  geom_point()
+
+
+```
+Sort of all over the place. Many are likely waterfront, but not so labeled.
+
+What about against the discrete factors
+
+```{r}
+ggplot(kc_df, aes(factor(grade), price))+
+  geom_boxplot()
+```
+
+```{r}
+ggplot(kc_df, aes(factor(view), price))+
+  geom_boxplot()
+```
+
+```{r}
+ggplot(kc_df, aes(factor(condition), price))+
+  geom_boxplot()
+```
+
+```{r}
+ggplot(kc_df, aes(factor(zipcode), price))+
+  geom_boxplot()
+```
+
+One zipcode has the highest median by a lot, but doesn't have the most expensive place.
+
+have houses been getting bigger or smaller over time?
+
+```{r}
+ggplot(kc_df, aes(yr_built, sqft_living))+
+  geom_point()+
+  geom_smooth(method=lm)
+```
+similarly have the number of bedrooms/bathrooms in new construction gone up?
+
+```{r}
+ggplot(kc_df , aes(yr_built, bedrooms))+
+  geom_point()+
+  geom_smooth(method=lm)
+```
+
+```{r}
+ggplot(kc_df , aes(yr_built, bathrooms))+
+  geom_point()+
+  geom_smooth(method=lm)
+```
+
+The trend toward more bathrooms definitely seems legit.
+
+
+
+```{r}
+#convert date to datetime
+library(lubridate)
+kc_df$date<-as.Date(sub('(\\d{2})(\\d{2})$', '-\\1-\\2', substring(kc_df$date,1,8)))
+
+```
+
+```{r}
+class(kc_df$date)
+month(kc_df$date[1:5])
+```
+
+"Happy families are all alike; every unhappy family is unhappy in its own way."
+Using location information, like a bounding box of lat/long, KNN

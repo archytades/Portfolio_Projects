@@ -1,0 +1,132 @@
+---
+title: "Project 2: Data Cleaning"
+author: "Group 9"
+date: "08/09/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Import packages
+```{r}
+library(tidyverse)
+library(corrplot)
+library(leaps)
+library(faraway)
+```
+
+### Data cleaning
+
+Remove unnecessary variables (ID and zip code). 
+```{r}
+data <- read.csv("~/MSDS/STAT6021/Project2/kc_house_data.csv") 
+```
+
+#### Define categorical variables 
+
+Change waterfront to categorical.
+```{r}
+data$waterfront <- factor(data$waterfront)
+levels(data$waterfront) <- c("no","yes") 
+```
+
+Change view to categorical. 
+```{r}
+data$view <- factor(data$view)
+levels(data$view) <- c("no", "yes", "yes", "yes", "yes") 
+```
+
+Create categorical variable 'renovated':
+```{r}
+data <- data %>% mutate(renovated = yr_renovated>0)
+data$renovated<-factor(data$renovated)
+levels(data$renovated)<- c("no","yes") 
+#data <- rename(data, renovated = yr_renovated)
+```
+
+#### Create new variables 
+
+Change yr_built to age. 
+```{r}
+data <- mutate(data, age = 2015 - yr_built)
+
+```
+
+Create categorical variable over_budget ($718,000). 
+```{r}
+data <- data %>% mutate(over_budget = price > 718000)
+data$over_budget <- factor(data$over_budget)
+levels(data$over_budget) <- c("no","yes") 
+```
+
+Change sqft_basement to basement. 
+```{r}
+data <- data %>% mutate(has_basement = sqft_basement>0)
+data$has_basement <- factor(data$has_basement)
+levels(data$has_basement) <- c("no","yes") 
+```
+
+Change date to season. 
+```{r}
+data$date <- substr(data$date,start=1,stop=8)
+data$year <- substr(data$date,start=1,stop=4)
+data$month <- substr(data$date, start=5, stop=6)
+data$day <- substr(data$date, start=7, stop=8)
+data$season <- ifelse(data$month=="05"|
+                       data$month=="06"|
+                       data$month=="07"|
+                       data$month=="08"|
+                       data$month=="09","summer","non-summer")
+```
+
+Delete columns we no longer need.
+```{r}
+data <- subset(data, select = -c(date, year, month, day) )
+```
+
+Change order of columns. 
+```{r}
+data <- data[,c("age",
+                "price",
+                "over_budget",
+        "bedrooms",
+        "bathrooms",
+        "sqft_living",
+        "sqft_lot",
+        "floors",
+        "condition",
+        "grade",
+        "sqft_above",
+        "lat",
+        "long",
+        "sqft_living15",
+        "sqft_lot15",
+        "waterfront",
+        "view",
+        "has_basement",
+        "renovated",
+        "season")]
+```
+
+### Correlation plot of numerical variables
+
+```{r}
+cor <- select(data, !c(over_budget, waterfront, view, has_basement, renovated, season)) %>%
+                cor(use = 'complete.obs') %>%
+                round(2)
+
+corrplot(cor, type = "lower", order = "FPC", diag = T, method = 'square',
+         col = COL2('PuOr'),
+         tl.col = "black", tl.srt = 45,
+         title = "Correlation matrix of numerical variables", 
+         mar=c(0,0,1,0))
+```
+We will be trying to predict the age of a house based on the other evidence available to us. 
+At first glance, we can see that some features show a high negative correlation with age: sqft_above and sqft_living, grade, bathrooms, sqft_living15, floorsm and longitude (east-west position). Latitude and condition show a moderate positive correlation.
+Sqft_above and sqft_living are measuring very similar things, and are very highly correlated, so only one will likely be able to stay in the model.
+
+So let's get to it!
+
+Fit a linear model
