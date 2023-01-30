@@ -1,0 +1,68 @@
+```{r}
+recipes<-readRDS("recipes.rds")
+```
+
+```{r}
+library(tidyverse)
+library(tidytext)
+```
+```{r}
+cuisine_words<-unnest(recipes, ingredients) %>% select(-id) %>% 
+  count(cuisine, ingredients, sort=TRUE)
+
+total_words<-cuisine_words %>% 
+  group_by(cuisine) %>% 
+  summarise(total=sum(n))
+
+cuisine_words<-left_join(cuisine_words, total_words)
+cuisine_words 
+```
+
+```{r}
+freq_by_rank <- cuisine_words %>% 
+  group_by(cuisine) %>% 
+  mutate(rank = row_number(), 
+         term_frequency = n/total) %>%
+  ungroup()
+
+freq_by_rank %>% arrange(desc(rank))
+```
+
+
+```{r}
+freq_by_rank %>% 
+  ggplot(aes(rank, term_frequency, color = cuisine)) + 
+  geom_line(size = 1.1, alpha = 0.8, show.legend = FALSE) + 
+  scale_x_log10() +
+  scale_y_log10()
+```
+```{r}
+rank_subset <- freq_by_rank %>% 
+  filter(rank < 500,
+         rank > 10)
+
+lm(log10(term_frequency) ~ log10(rank), data = rank_subset)
+
+```
+
+Classic versions of Zipf's law have frequency inversely proportional to rank
+$frequency\propto{\frac{1}{rank}}$
+
+
+```{r}
+freq_by_rank %>% 
+  ggplot(aes(rank, term_frequency, color = cuisine)) + 
+  geom_abline(intercept = -0.406, slope = -1.176, 
+              color = "gray50", linetype = 2) +
+  geom_line(size = 1.1, alpha = 0.8, show.legend = FALSE) + 
+  scale_x_log10() +
+  scale_y_log10()
+```
+
+```{r}
+recipes_enriched<-cuisine_words %>% 
+  bind_tf_idf(ingredients, cuisine, n)
+
+recipes_enriched 
+```
+
